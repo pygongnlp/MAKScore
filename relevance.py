@@ -11,6 +11,20 @@ from scipy.stats import pearsonr, spearmanr, kendalltau
 
 openai.api_key = <YOUR_OPENAI_KEY>
 
+ASPECTS = <ASPECTS>
+
+FIRST_PROMPT = "You will be given one summary written for a news article.\n" \
+               "Your task is to rate the summary based on the given aspects.\n" \
+               "Scores for each aspect range from 1 to 5, representing worst to best.\n\n" \
+               "Aspects:\n" \
+               "[aspects]\n\n" \
+               "News article:\n" \
+               "[article]\n" \
+               "Summary:\n" \
+               "[summary]\n\n" \
+               "Based on the news article and the aspects, please rate the summary for each aspect.\n" \
+               "Provide them in JSON format, aspect as key, score as value."\
+
 PROMPT = "You will be given one summary written for a news article.\n" \
          "Your task is to rate the summary on one metric.\n\n" \
          "Evaluation Criteria:\n" \
@@ -20,8 +34,11 @@ PROMPT = "You will be given one summary written for a news article.\n" \
          "[article]\n" \
          "Summary:\n" \
          "[summary]\n\n" \
-         "Based on the news article and the evaluation criteria for relevance, please rate the relevance " \
-         "of the summary.\n" \
+         "Before you rate the above summary, some scores for different aspects of this summary can help you rate " \
+         "the relevance of this summary:\n" \
+         "[aotscores]\n" \
+         "Based on the news article, the evaluation criteria for relevance and the " \
+         "scores for different aspects of the summary, please rate the relevance of the summary.\n" \
          "Relevance Score:"
 
 
@@ -40,9 +57,26 @@ def correlation(pred_scores, gold_scores):
     return pearsonr_res, spearmanr_res, kendalltau_res
 
 
-def generate_prompt(article, summary):
+def generate_prompt(article, summary, aspects, aot_scores):
     prompt = PROMPT.replace("[article]", article)
     prompt = prompt.replace("[summary]", summary)
+
+    aot = ""
+    for k, v in aspects.items():
+        aot += f"{k} (1-5) {v}\nScore: {aot_scores[k]}\n"
+    prompt = prompt.replace("[aotscores]", aot)
+    #print(prompt)
+    return prompt
+
+
+def generate_aot_prompt(article, summary, aspects):
+    prompt = FIRST_PROMPT.replace("[article]", article)
+    prompt = prompt.replace("[summary]", summary)
+
+    aps = ""
+    for k, v in aspects.items():
+        aps += f"{k}: {v}\n"
+    prompt = prompt.replace("[aspects]", aps)
     #print(prompt)
     return prompt
 
@@ -59,7 +93,19 @@ def extract_first_number_from_string(string):
 
 @backoff.on_exception(backoff.expo, openai.error.RateLimitError)
 def compute_score(article, summary, args):
-    prompt = generate_prompt(article, summary)
+    prompt = generate_aot_prompt(article, summary, ASPECTS)
+    aot_response = openai.ChatCompletion.create(
+        model=args.model_name,
+        messages=[
+            {"role": "user",
+             "content": prompt},
+        ],
+        temperature=args.temperature,
+        n=args.n
+    )
+    aot_scores = eval(aot_response["choices"][0]["message"]["content"])
+
+    prompt = generate_prompt(article, summary, ASPECTS, aot_scores)
     response = openai.ChatCompletion.create(
         model=args.model_name,
         messages=[
@@ -70,7 +116,6 @@ def compute_score(article, summary, args):
         n=args.n
     )
     prompt += response["choices"][0]["message"]["content"]
-    # print(prompt)
     score = float(extract_first_number_from_string(response["choices"][0]["message"]["content"]))
     return score, prompt
 
@@ -114,8 +159,8 @@ if __name__ == '__main__':
             "score": ps,
             "gold_score": gs
         })
-    json.dump(result, open(f"summeval/output/origin/{args.output}.json", "w", encoding="utf8"))
+    json.dump(result, open(f"summeval/output/makscore/{args.output}.json", "w", encoding="utf8"))
 
-    with open(f"summeval/output/origin/{args.output}.txt", "w", encoding="utf8") as fw:
+    with open(f"summeval/output/makscore/{args.output}.txt", "w", encoding="utf8") as fw:
         for ps, gs in zip(scores, golds):
             fw.write(f"{ps}\t{gs}\n")
