@@ -9,7 +9,7 @@ import backoff
 import openai
 from scipy.stats import pearsonr, spearmanr, kendalltau
 
-openai.api_key = "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"
+openai.api_key = <YOUR_OPENAI_KEY>
 
 PROMPT = "You will be given one summary written for a news article.\n" \
          "Your task is to rate the summary on one metric.\n\n" \
